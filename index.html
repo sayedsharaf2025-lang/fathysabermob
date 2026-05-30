@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>نظام إدارة فواتير فودافون</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- الشريط الجانبي -->
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <h2>📊 فودافون</h2>
+        <small>نظام الإدارة</small>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" data-page="dashboard">
+          <span class="nav-icon">📊</span>
+          <span class="nav-text">لوحة التحكم</span>
+        </a>
+        <a href="#" class="nav-item" data-page="customers">
+          <span class="nav-icon">👥</span>
+          <span class="nav-text">العملاء</span>
+        </a>
+        <a href="#" class="nav-item" data-page="import-invoices">
+          <span class="nav-icon">📥</span>
+          <span class="nav-text">استيراد الفواتير</span>
+        </a>
+        <a href="#" class="nav-item" data-page="collection">
+          <span class="nav-icon">💰</span>
+          <span class="nav-text">التحصيل</span>
+        </a>
+        <a href="#" class="nav-item" data-page="wallet">
+          <span class="nav-icon">👛</span>
+          <span class="nav-text">المحفظة</span>
+        </a>
+        <a href="#" class="nav-item" data-page="statement">
+          <span class="nav-icon">📋</span>
+          <span class="nav-text">كشف الحساب</span>
+        </a>
+        <a href="#" class="nav-item" data-page="payments">
+          <span class="nav-icon">💳</span>
+          <span class="nav-text">سجل المدفوعات</span>
+        </a>
+        <a href="#" class="nav-item" data-page="backup">
+          <span class="nav-icon">💾</span>
+          <span class="nav-text">النسخ الاحتياطي</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="loading-bar" id="loadingBar">جاري التحميل...</div>
+        <button id="darkModeToggle" class="dark-mode-btn">🌙 الوضع الداكن</button>
+      </div>
+    </aside>
+
+    <!-- المحتوى الرئيسي -->
+    <main id="main-content">
+      <!-- ====== لوحة التحكم ====== -->
+      <section id="page-dashboard" class="page active">
+        <div class="page-header">
+          <h1>لوحة التحكم</h1>
+        </div>
+        <div class="stats-grid" id="statsGrid">
+          <div class="stat-card">
+            <div class="stat-icon">👥</div>
+            <div class="stat-info">
+              <span class="stat-value" id="statCustomers">0</span>
+              <span class="stat-label">العملاء</span>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">📞</div>
+            <div class="stat-info">
+              <span class="stat-value" id="statLines">0</span>
+              <span class="stat-label">الخطوط</span>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">📄</div>
+            <div class="stat-info">
+              <span class="stat-value" id="statInvoices">0</span>
+              <span class="stat-label">الفواتير</span>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">✅</div>
+            <div class="stat-info">
+              <span class="stat-value" id="statPaid">0</span>
+              <span class="stat-label">المدفوعات</span>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">⏳</div>
+            <div class="stat-info">
+              <span class="stat-value" id="statUnpaid">0</span>
+              <span class="stat-label">غير المدفوع</span>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">📈</div>
+            <div class="stat-info">
+              <span class="stat-value" id="statProfit">0</span>
+              <span class="stat-label">صافي الربح</span>
+            </div>
+          </div>
+        </div>
+        <div class="charts-grid">
+          <div class="chart-card">
+            <h3>اتجاه المدفوعات</h3>
+            <canvas id="paymentChart"></canvas>
+          </div>
+          <div class="chart-card">
+            <h3>الفواتير vs المدفوعات</h3>
+            <canvas id="invoiceChart"></canvas>
+          </div>
+        </div>
+        <div class="chart-card" style="margin-top:1rem">
+          <h3>أكثر 5 عملاء تأخيرًا</h3>
+          <table class="table" id="topDelinquentTable">
+            <thead><tr><th>#</th><th>الاسم</th><th>رقم الهاتف</th><th>المبلغ المستحق</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ====== العملاء ====== -->
+      <section id="page-customers" class="page">
+        <div class="page-header">
+          <h1>إدارة العملاء</h1>
+          <div class="header-actions">
+            <button class="btn btn-primary" onclick="showAddCustomerModal()">➕ إضافة عميل</button>
+            <button class="btn btn-secondary" onclick="document.getElementById('excelCustomerInput').click()">📥 استيراد من Excel</button>
+            <input type="file" id="excelCustomerInput" accept=".xlsx,.xls" style="display:none" onchange="importCustomersFromExcel(event)">
+          </div>
+        </div>
+        <div class="search-bar">
+          <input type="text" id="customerSearch" placeholder="🔍 بحث بالاسم أو رقم الهاتف..." oninput="renderCustomerTable()">
+        </div>
+        <table class="table" id="customerTable">
+          <thead>
+            <tr><th>الاسم</th><th>رقم الهاتف</th><th>سعر الباقة</th><th>الخطة</th><th>الرقم القومي</th><th>الإجراءات</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+
+        <!-- مودال إضافة/تعديل عميل -->
+        <div id="customerModal" class="modal" style="display:none">
+          <div class="modal-content">
+            <span class="modal-close" onclick="closeCustomerModal()">&times;</span>
+            <h2 id="customerModalTitle">إضافة عميل جديد</h2>
+            <form id="customerForm" onsubmit="saveCustomer(event)">
+              <input type="hidden" id="editCustomerId">
+              <div class="form-group">
+                <label>الاسم</label>
+                <input type="text" id="custName" required>
+              </div>
+              <div class="form-group">
+                <label>رقم الهاتف</label>
+                <input type="text" id="custPhone" required>
+              </div>
+              <div class="form-group">
+                <label>سعر الباقة</label>
+                <input type="number" id="custPlanPrice" step="0.01" required>
+              </div>
+              <div class="form-group">
+                <label>الخطة</label>
+                <select id="custPlan">
+                  <option value="مفوتر">مفوتر</option>
+                  <option value="مسبق الدفع">مسبق الدفع</option>
+                  <option value="باقة">باقة</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>الرقم القومي</label>
+                <input type="text" id="custNationalId">
+              </div>
+              <div class="form-group">
+                <label>أرقام إضافية (رقم لكل سطر)</label>
+                <textarea id="custExtraPhones" placeholder="01000000000&#10;01111111111"></textarea>
+              </div>
+              <button type="submit" class="btn btn-primary">حفظ</button>
+              <button type="button" class="btn btn-secondary" onclick="closeCustomerModal()">إلغاء</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====== استيراد الفواتير ====== -->
+      <section id="page-import-invoices" class="page">
+        <div class="page-header">
+          <h1>استيراد الفواتير</h1>
+        </div>
+        <div class="card">
+          <div class="form-row">
+            <div class="form-group">
+              <label>الشهر</label>
+              <input type="month" id="invoiceMonth" required>
+            </div>
+            <div class="form-group">
+              <label>توليد فاتورة مسبقة الدفع (نفس أسعار الباقات)</label>
+              <button class="btn btn-secondary" onclick="generatePrepaidInvoices()">📄 توليد فاتورة مسبقة</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <button class="btn btn-primary" onclick="document.getElementById('excelInvoiceInput').click()">📥 تحميل ملف Excel للفواتير</button>
+            <input type="file" id="excelInvoiceInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="importInvoicesFromExcel(event)">
+            <button class="btn btn-secondary" onclick="document.getElementById('jsonInvoiceInput').click()">📥 استيراد من JSON</button>
+            <input type="file" id="jsonInvoiceInput" accept=".json" style="display:none" onchange="importInvoicesFromJSON(event)">
+          </div>
+        </div>
+        <div id="invoicePreview" style="display:none">
+          <h3>معاينة البيانات</h3>
+          <table class="table" id="invoicePreviewTable">
+            <thead><tr><th>رقم الهاتف</th><th>الخطة</th><th>المبلغ</th><th>الحالة</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <div class="form-actions">
+            <button class="btn btn-success" onclick="saveInvoices()">💾 حفظ الكل</button>
+            <button class="btn btn-secondary" onclick="cancelInvoiceImport()">إلغاء</button>
+          </div>
+          <div id="invoiceResult"></div>
+        </div>
+      </section>
+
+      <!-- ====== التحصيل ====== -->
+      <section id="page-collection" class="page">
+        <div class="page-header">
+          <h1>التحصيل</h1>
+        </div>
+        <div class="card">
+          <div class="form-row">
+            <div class="form-group">
+              <label>الشهر</label>
+              <input type="month" id="collectionMonth" onchange="renderCollectionTable()">
+            </div>
+            <div class="form-group">
+              <label>حالة الدفع</label>
+              <select id="collectionFilter" onchange="renderCollectionTable()">
+                <option value="unpaid">غير مدفوعة</option>
+                <option value="paid">مدفوعة</option>
+                <option value="partial">مدفوعة جزئيًا</option>
+                <option value="all">الكل</option>
+              </select>
+            </div>
+          </div>
+          <div class="search-bar">
+            <input type="text" id="collectionSearch" placeholder="🔍 بحث بالاسم أو الرقم..." oninput="renderCollectionTable()">
+          </div>
+          <div id="collectionSearchSummary" style="display:none" class="search-summary"></div>
+          <div class="form-row">
+            <button class="btn btn-success" onclick="collectAll()">💰 تحصيل الكل</button>
+            <span id="collectionTotal" class="collection-total"></span>
+          </div>
+        </div>
+        <table class="table" id="collectionTable">
+          <thead>
+            <tr><th>رقم الهاتف</th><th>الاسم</th><th>الخطة</th><th>المبلغ</th><th>المدفوع</th><th>الحالة</th><th>تعديل الباقة</th><th>إجراءات</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <!-- ====== المحفظة ====== -->
+      <section id="page-wallet" class="page">
+        <div class="page-header">
+          <h1>المحفظة</h1>
+        </div>
+        <div class="card">
+          <div class="search-bar">
+            <input type="text" id="walletSearch" placeholder="🔍 بحث برقم الهاتف أو الاسم..." oninput="searchWallet()">
+          </div>
+          <div id="walletResults"></div>
+          <div id="walletEditArea" style="display:none">
+            <table class="table" id="walletTransactionsTable">
+              <thead><tr><th>التاريخ</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead>
+              <tbody></tbody>
+            </table>
+            <div class="form-row">
+              <div class="form-group">
+                <label>إيداع (+)</label>
+                <input type="number" id="walletDepositAmount" step="0.01" placeholder="المبلغ">
+                <button class="btn btn-success" onclick="walletDeposit()">💰 إيداع</button>
+              </div>
+              <div class="form-group">
+                <label>سحب (-)</label>
+                <input type="number" id="walletWithdrawAmount" step="0.01" placeholder="المبلغ">
+                <button class="btn btn-danger" onclick="walletWithdraw()">💸 سحب</button>
+              </div>
+              <div class="form-group">
+                <label>تسوية الرصيد</label>
+                <button class="btn btn-warning" onclick="walletSettle()">⚖️ تسوية مع الفواتير</button>
+              </div>
+            </div>
+            <button class="btn btn-primary" onclick="saveWallet()">💾 حفظ التعديلات</button>
+            <div id="walletBalance" class="wallet-balance"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====== كشف الحساب ====== -->
+      <section id="page-statement" class="page">
+        <div class="page-header">
+          <h1>كشف الحساب</h1>
+        </div>
+        <div class="card">
+          <div class="search-bar">
+            <input type="text" id="statementSearch" placeholder="🔍 بحث باسم أو رقم..." oninput="searchStatement()">
+          </div>
+          <div id="statementCustomerList" style="display:none" class="search-summary"></div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>نوع</label>
+              <select id="statementFilter" onchange="renderStatement()">
+                <option value="all">الكل</option>
+                <option value="invoice">فواتير</option>
+                <option value="plan">باقات</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>الشهر</label>
+              <select id="statementMonth" onchange="renderStatement()">
+                <option value="all">كل الأشهر</option>
+              </select>
+            </div>
+          </div>
+          <div id="statementSummary" class="statement-summary"></div>
+          <button class="btn btn-primary" onclick="printStatement()">🖨️ طباعة كشف حساب</button>
+        </div>
+        <table class="table" id="statementTable">
+          <thead><tr><th>التاريخ</th><th>رقم الهاتف</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <!-- ====== سجل المدفوعات ====== -->
+      <section id="page-payments" class="page">
+        <div class="page-header">
+          <h1>سجل المدفوعات</h1>
+          <button class="btn btn-secondary" onclick="exportPayments()">📥 تصدير Excel</button>
+        </div>
+        <div class="search-bar">
+          <input type="text" id="paymentSearch" placeholder="🔍 بحث..." oninput="renderPaymentsTable()">
+        </div>
+        <table class="table" id="paymentsTable">
+          <thead><tr><th>التاريخ</th><th>الشهر</th><th>رقم الهاتف</th><th>الاسم</th><th>المبلغ</th><th>النوع</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <!-- ====== النسخ الاحتياطي ====== -->
+      <section id="page-backup" class="page">
+        <div class="page-header">
+          <h1>النسخ الاحتياطي</h1>
+        </div>
+        <div class="card">
+          <button class="btn btn-primary" onclick="exportBackup()">📤 تصدير قاعدة البيانات (JSON)</button>
+        </div>
+        <div class="card">
+          <input type="file" id="restoreInput" accept=".json" onchange="restoreBackup(event)">
+          <button class="btn btn-warning" onclick="document.getElementById('restoreInput').click()">📥 استعادة نسخة احتياطية</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="notification" class="notification" style="display:none"></div>
+
+  <script src="js/firebase.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/xlsx.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
