@@ -106,7 +106,7 @@ function updateDashboard() {
   // Count lines (phones)
   let totalLines = 0;
   customers.forEach(c => {
-    totalLines++; // main phone
+    totalLines++;
     if (c.extraPhones) {
       const lines = Array.isArray(c.extraPhones) ? c.extraPhones : c.extraPhones.split('\n').filter(p => p.trim());
       totalLines += lines.length;
@@ -114,9 +114,23 @@ function updateDashboard() {
   });
 
   const totalInvoices = invoices.length;
-  const totalPaid = payments.filter(p => p.type === 'collection' || p.type === 'wallet_settle').reduce((s, p) => s + p.amount, 0);
-  const totalUnpaid = invoices.filter(i => i.status === 'unpaid' || i.status === 'partial').reduce((s, i) => s + (i.amount - (i.paid || 0)), 0);
-  const totalProfit = totalPaid - (invoices.reduce((s, i) => s + i.amount, 0) - totalUnpaid);
+  // Revenue = planPrice of paid invoices
+  let totalRevenue = 0;
+  let totalCost = 0;
+  let totalUnpaidRevenue = 0;
+  invoices.forEach(inv => {
+    const cust = customers.find(c => c.id === inv.customerId || c.phone === inv.phone);
+    const planP = inv.planPrice || (cust ? cust.planPrice : 0) || 0;
+    if (inv.status === 'paid') {
+      totalRevenue += planP;
+      totalCost += inv.amount;
+    } else if (inv.status === 'unpaid' || inv.status === 'partial') {
+      totalUnpaidRevenue += planP;
+    }
+  });
+  const totalPaid = totalRevenue;
+  const totalUnpaid = totalUnpaidRevenue;
+  const totalProfit = totalRevenue - totalCost;
 
   document.getElementById('statCustomers').textContent = customers.length;
   document.getElementById('statLines').textContent = totalLines;
@@ -125,11 +139,13 @@ function updateDashboard() {
   document.getElementById('statUnpaid').textContent = totalUnpaid.toFixed(2);
   document.getElementById('statProfit').textContent = totalProfit.toFixed(2);
 
-  // Top delinquent customers
+  // Top delinquent customers (based on unpaid planPrice)
   const customerDebt = {};
   invoices.filter(i => i.status === 'unpaid' || i.status === 'partial').forEach(i => {
     const key = i.customerId || i.phone;
-    customerDebt[key] = (customerDebt[key] || 0) + (i.amount - (i.paid || 0));
+    const cust = customers.find(c => c.id === i.customerId || c.phone === i.phone);
+    const planP = i.planPrice || (cust ? cust.planPrice : 0) || 0;
+    customerDebt[key] = (customerDebt[key] || 0) + planP;
   });
   const sorted = Object.entries(customerDebt)
     .map(([key, debt]) => {
@@ -144,7 +160,6 @@ function updateDashboard() {
     `<tr><td>${i+1}</td><td>${c.name}</td><td>${c.phone}</td><td>${c.debt.toFixed(2)}</td></tr>`
   ).join('');
 
-  // Charts
   initDashboardCharts(payments, invoices);
 }
 
@@ -264,7 +279,6 @@ async function importInvoicesFromExcel(e) {
       const data = new Uint8Array(ev.target.result);
       const parsed = parseExcelInvoices(data);
       if (parsed.length === 0) { notify('لم يتم العثور على بيانات', 'error'); return; }
-      // Check duplicates
       pendingInvoices = [];
       const checked = [];
       for (const inv of parsed) {
@@ -273,14 +287,15 @@ async function importInvoicesFromExcel(e) {
           checked.push({ ...inv, status: '⚠️ موجود مسبقًا', canSave: false });
         } else {
           checked.push({ ...inv, status: 'جديد', canSave: true });
-          pendingInvoices.push({ ...inv, month, status: 'unpaid', paid: 0 });
+          const cust = allCustomers.find(c => c.phone === inv.phone || (c.extraPhones && c.extraPhones.includes(inv.phone)));
+          pendingInvoices.push({
+            ...inv, month, status: 'unpaid', paid: 0,
+            customerId: cust ? cust.id : '',
+            customerName: cust ? cust.name : '',
+            planPrice: cust ? (cust.planPrice || 0) : 0
+          });
         }
       }
-      // Match customers
-      pendingInvoices = pendingInvoices.map(inv => {
-        const cust = allCustomers.find(c => c.phone === inv.phone || (c.extraPhones && c.extraPhones.includes(inv.phone)));
-        return { ...inv, customerId: cust ? cust.id : '', customerName: cust ? cust.name : '' };
-      });
       renderInvoicePreview(checked);
       notify(`تم العثور على ${parsed.length} فاتورة، ${pendingInvoices.length} جديدة`);
     } catch (err) { notify('خطأ في قراءة الملف: ' + err.message, 'error'); }
@@ -308,7 +323,7 @@ async function importInvoicesFromJSON(e) {
         } else {
           checked.push({ ...inv, status: 'جديد', canSave: true });
           const cust = allCustomers.find(c => c.phone === inv.phone);
-          pendingInvoices.push({ ...inv, month, status: 'unpaid', paid: 0, customerId: cust ? cust.id : '', customerName: cust ? cust.name : '' });
+          pendingInvoices.push({ ...inv, month, status: 'unpaid', paid: 0, customerId: cust ? cust.id : '', customerName: cust ? cust.name : '', planPrice: cust ? (cust.planPrice || 0) : 0 });
         }
       }
       renderInvoicePreview(checked);
@@ -368,14 +383,14 @@ async function generatePrepaidInvoices() {
         customerId: c.id,
         customerName: c.name,
         month,
-        amount: c.planPrice || 0,
+        amount: 0,
+        planPrice: c.planPrice || 0,
         paid: 0,
         status: 'unpaid',
         plan: c.plan || 'مفوتر'
       });
       count++;
     }
-    // Extra phones
     if (c.extraPhones) {
       const phones = Array.isArray(c.extraPhones) ? c.extraPhones : c.extraPhones.split('\n').filter(p => p.trim());
       for (const ph of phones) {
@@ -388,7 +403,8 @@ async function generatePrepaidInvoices() {
             customerId: c.id,
             customerName: c.name,
             month,
-            amount: c.planPrice || 0,
+            amount: 0,
+            planPrice: c.planPrice || 0,
             paid: 0,
             status: 'unpaid',
             plan: c.plan || 'مفوتر'
@@ -458,22 +474,30 @@ async function renderCollectionTable() {
   }
 
   const tbody = document.querySelector('#collectionTable tbody');
+  let hasLowPlan = false;
   tbody.innerHTML = invoices.map(inv => {
     const cust = allCustomers.find(c => c.id === inv.customerId || c.phone === inv.phone);
     const name = cust ? cust.name : (inv.customerName || '-');
+    const planP = inv.planPrice || (cust ? cust.planPrice : 0) || 0;
     const paid = inv.paid || 0;
+    const profit = inv.status === 'paid' ? (planP - inv.amount) : 0;
+    const lowWarning = (planP < inv.amount && inv.amount > 0);
+    if (lowWarning) hasLowPlan = true;
+    const warnIcon = lowWarning ? `<span class="badge badge-warning" title="سعر الباقة أقل من الفاتورة!">⚠️</span>` : '';
     const statusLabel = inv.status === 'paid' ? '<span class="badge badge-success">مدفوعة</span>' :
       inv.status === 'partial' ? `<span class="badge badge-warning">جزئي (${paid})</span>` :
       '<span class="badge badge-danger">غير مدفوعة</span>';
     return `
       <tr>
-        <td>${inv.phone}</td>
+        <td>${inv.phone} ${warnIcon}</td>
         <td>${name}</td>
         <td>${inv.plan || '-'}</td>
         <td>${inv.amount}</td>
+        <td>${planP}</td>
         <td>${paid}</td>
+        <td>${profit.toFixed(2)}</td>
         <td>${statusLabel}</td>
-        <td><input type="number" id="planPrice_${inv.id}" value="${cust ? (cust.planPrice || 0) : 0}" class="form-group" style="width:80px" onchange="updatePlanPrice('${inv.id}', this.value, '${inv.month}')"></td>
+        <td><input type="number" id="planPrice_${inv.id}" value="${planP}" class="form-group" style="width:80px" onchange="updatePlanPrice('${inv.id}', this.value, '${inv.month}')"></td>
         <td>
           <button class="btn btn-success btn-sm" onclick="payInvoice('${inv.id}')" ${inv.status === 'paid' ? 'disabled' : ''}>💰 دفع</button>
           ${inv.status === 'paid' ? `<button class="btn btn-warning btn-sm" onclick="unpayInvoice('${inv.id}')">↩️ إلغاء</button>` : ''}
@@ -483,9 +507,28 @@ async function renderCollectionTable() {
     `;
   }).join('');
 
+  // Show global warning if any low plan prices
+  const summaryDiv = document.getElementById('collectionSearchSummary');
+  if (hasLowPlan && !search) {
+    const lowCount = invoices.filter(inv => {
+      const cust = allCustomers.find(c => c.id === inv.customerId || c.phone === inv.phone);
+      const planP = inv.planPrice || (cust ? cust.planPrice : 0) || 0;
+      return planP < inv.amount && inv.amount > 0;
+    }).length;
+    summaryDiv.style.display = 'block';
+    summaryDiv.innerHTML = `<div class="badge badge-warning" style="font-size:1rem;padding:0.5rem 1rem">⚠️ يوجد <strong>${lowCount}</strong> رقم سعر باقته أقل من قيمة الفاتورة. يرجى مراجعة وتعديل سعر الباقة أو تجاهل التنبيه.</div>`;
+  } else if (!search) {
+    summaryDiv.style.display = 'none';
+  }
+
   // Total
-  const totalAmount = invoices.reduce((s, i) => s + (i.amount - (i.paid || 0)), 0);
-  document.getElementById('collectionTotal').textContent = `الإجمالي المطلوب: ${totalAmount.toFixed(2)}`;
+  const totalCollectible = invoices.reduce((s, i) => {
+    const cust = allCustomers.find(c => c.id === i.customerId || c.phone === i.phone);
+    const planP = i.planPrice || (cust ? cust.planPrice : 0) || 0;
+    if (i.status === 'unpaid' || i.status === 'partial') return s + planP;
+    return s;
+  }, 0);
+  document.getElementById('collectionTotal').textContent = `الإجمالي المطلوب تحصيله (سعر الباقات): ${totalCollectible.toFixed(2)}`;
 }
 
 async function updatePlanPrice(invoiceId, price, month) {
@@ -495,8 +538,7 @@ async function updatePlanPrice(invoiceId, price, month) {
   if (cust) {
     cust.planPrice = parseFloat(price) || 0;
     await saveCustomerToFB(cust);
-    // Also update the invoice amount to match new plan price
-    inv.amount = parseFloat(price) || 0;
+    inv.planPrice = parseFloat(price) || 0;
     await saveInvoiceToFB(inv);
     notify('تم تحديث سعر الباقة');
     renderCollectionTable();
@@ -506,26 +548,49 @@ async function updatePlanPrice(invoiceId, price, month) {
 async function payInvoice(id) {
   const inv = allInvoices.find(i => i.id === id);
   if (!inv) return;
-  const remaining = inv.amount - (inv.paid || 0);
-  if (remaining <= 0) { notify('الفاتورة مدفوعة بالكامل'); return; }
+  if (inv.status === 'paid') { notify('الفاتورة مدفوعة بالفعل'); return; }
+  const cust = allCustomers.find(c => c.id === inv.customerId || c.phone === inv.phone);
+  const planP = inv.planPrice || (cust ? cust.planPrice : 0) || 0;
+  if (planP <= 0) { notify('سعر الباقة صفر، يرجى تحديد سعر الباقة أولاً', 'error'); return; }
+
+  // Warn if planPrice < invoice amount
+  if (planP < inv.amount && inv.amount > 0) {
+    const action = confirm(`⚠️ تحذير: سعر الباقة (${planP}) أقل من قيمة الفاتورة (${inv.amount})!\n\nالخسارة المتوقعة: ${(planP - inv.amount).toFixed(2)}\n\nاختر "موافق" لتعديل سعر الباقة ليتوافق مع الفاتورة، أو "إلغاء" للتجاهل والاستمرار في الدفع.`);
+    if (action) {
+      // User wants to adjust - prompt for new price
+      const newPrice = prompt('أدخل سعر الباقة الجديد (أو اتركه فارغًا للتجاهل):', inv.amount);
+      if (newPrice !== null && newPrice !== '') {
+        const newPlanP = parseFloat(newPrice);
+        if (newPlanP > 0) {
+          cust.planPrice = newPlanP;
+          inv.planPrice = newPlanP;
+          await saveCustomerToFB(cust);
+          await saveInvoiceToFB(inv);
+          notify(`تم تعديل سعر الباقة إلى ${newPlanP}`);
+          renderCollectionTable();
+          return;
+        }
+      }
+    }
+  }
 
   // Check wallet
   const wallet = await getWallet(inv.phone);
-  let payAmount = remaining;
+  let payAmount = planP;
   if (wallet.balance > 0) {
     const useWallet = confirm(`للعميل رصيد محفظة: ${wallet.balance.toFixed(2)}. هل تريد استخدامه للدفع؟`);
     if (useWallet) {
-      const deduct = Math.min(wallet.balance, remaining);
-      payAmount = remaining;
+      const deduct = Math.min(wallet.balance, planP);
+      payAmount = planP;
       wallet.balance -= deduct;
       wallet.transactions = wallet.transactions || [];
-      wallet.transactions.push({ type: 'payment', amount: deduct, date: Date.now(), desc: `دفع فاتورة ${inv.month}` });
+      wallet.transactions.push({ type: 'payment', amount: deduct, date: Date.now(), desc: `دفع سعر باقة ${inv.month}` });
       await saveWalletToFB(inv.phone, wallet);
     }
   }
 
   inv.paid = (inv.paid || 0) + payAmount;
-  inv.status = inv.paid >= inv.amount ? 'paid' : 'partial';
+  inv.status = 'paid';
   await saveInvoiceToFB(inv);
 
   await savePaymentToFB({
@@ -538,7 +603,7 @@ async function payInvoice(id) {
     type: 'collection'
   });
 
-  notify(`تم تسجيل الدفع: ${payAmount.toFixed(2)}`);
+  notify(`تم تحصيل سعر الباقة: ${payAmount.toFixed(2)}`);
   renderCollectionTable();
 }
 
@@ -547,12 +612,42 @@ async function collectAll() {
   const filter = document.getElementById('collectionFilter').value;
   let invoices = allInvoices.filter(i => i.month === month && (i.status === 'unpaid' || i.status === 'partial'));
   if (invoices.length === 0) { notify('لا توجد فواتير غير مدفوعة', 'warning'); return; }
+
+  // Check for low plan prices
+  let warnings = [];
+  for (const inv of invoices) {
+    const cust = allCustomers.find(c => c.id === inv.customerId || c.phone === inv.phone);
+    const planP = inv.planPrice || (cust ? cust.planPrice : 0) || 0;
+    if (planP < inv.amount && inv.amount > 0) {
+      warnings.push(`${inv.phone}: الباقة ${planP} < الفاتورة ${inv.amount}`);
+    }
+  }
+  if (warnings.length > 0) {
+    const msg = '⚠️ تحذير: الأرقام التالية سعر باقتها أقل من الفاتورة:\n' + warnings.join('\n') +
+      '\n\nاختر "موافق" لتعديل الأسعار تلقائيًا لتساوي الفاتورة، أو "إلغاء" للتجاهل والاستمرار.';
+    if (confirm(msg)) {
+      for (const inv of invoices) {
+        const cust = allCustomers.find(c => c.id === inv.customerId || c.phone === inv.phone);
+        const planP = inv.planPrice || (cust ? cust.planPrice : 0) || 0;
+        if (planP < inv.amount && inv.amount > 0) {
+          const newP = inv.amount;
+          if (cust) { cust.planPrice = newP; await saveCustomerToFB(cust); }
+          inv.planPrice = newP;
+          await saveInvoiceToFB(inv);
+        }
+      }
+      notify('تم تعديل أسعار الباقات تلقائيًا');
+    }
+  }
+
   if (!confirm(`سيتم تحصيل ${invoices.length} فاتورة. هل أنت متأكد؟`)) return;
   showLoading(true);
   let total = 0;
   for (const inv of invoices) {
-    const remaining = inv.amount - (inv.paid || 0);
-    inv.paid = inv.amount;
+    const cust = allCustomers.find(c => c.id === inv.customerId || c.phone === inv.phone);
+    const planP = inv.planPrice || (cust ? cust.planPrice : 0) || 0;
+    if (planP <= 0) continue;
+    inv.paid = planP;
     inv.status = 'paid';
     await saveInvoiceToFB(inv);
     await savePaymentToFB({
@@ -560,11 +655,11 @@ async function collectAll() {
       customerId: inv.customerId,
       customerName: inv.customerName,
       month: inv.month,
-      amount: remaining,
+      amount: planP,
       date: Date.now(),
       type: 'collection'
     });
-    total += remaining;
+    total += planP;
   }
   notify(`تم تحصيل ${total.toFixed(2)} لـ ${invoices.length} فاتورة`);
   showLoading(false);
