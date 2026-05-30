@@ -508,7 +508,6 @@ async function renderCollectionTable() {
   }).join('');
 
   // Show global warning if any low plan prices
-  const summaryDiv = document.getElementById('collectionSearchSummary');
   if (hasLowPlan && !search) {
     const lowCount = invoices.filter(inv => {
       const cust = allCustomers.find(c => c.id === inv.customerId || c.phone === inv.phone);
@@ -789,18 +788,21 @@ async function walletWithdraw() {
 
 async function walletSettle() {
   if (!currentWalletPhone || !currentWalletData) { notify('اختر عميلاً أولاً', 'warning'); return; }
-  // Find unpaid invoices for this phone
   const unpaid = allInvoices.filter(i =>
     (i.phone === currentWalletPhone) &&
     (i.status === 'unpaid' || i.status === 'partial')
   );
   if (unpaid.length === 0) { notify('لا توجد فواتير غير مدفوعة للتسوية', 'warning'); return; }
+  // Calculate total due based on planPrice (not invoice amount)
   let totalDue = 0;
-  unpaid.forEach(i => totalDue += (i.amount - (i.paid || 0)));
+  for (const inv of unpaid) {
+    const cust = allCustomers.find(c => c.id === inv.customerId || c.phone === inv.phone);
+    totalDue += inv.planPrice || (cust ? cust.planPrice : 0) || 0;
+  }
   if (totalDue <= 0) { notify('لا توجد فواتير غير مدفوعة', 'warning'); return; }
   const useAmount = Math.min(currentWalletData.balance, totalDue);
   if (useAmount <= 0) { notify('الرصيد صفر، لا يمكن التسوية', 'warning'); return; }
-  if (!confirm(`سيتم استخدام ${useAmount.toFixed(2)} من المحفظة لتسوية الفواتير. هل أنت متأكد؟`)) return;
+  if (!confirm(`سيتم استخدام ${useAmount.toFixed(2)} من المحفظة لتسوية ${unpaid.length} فاتورة (إجمالي سعر الباقات: ${totalDue.toFixed(2)}). هل أنت متأكد؟`)) return;
 
   currentWalletData.balance -= useAmount;
   currentWalletData.transactions = currentWalletData.transactions || [];
@@ -810,10 +812,11 @@ async function walletSettle() {
   let remaining = useAmount;
   for (const inv of unpaid) {
     if (remaining <= 0) break;
-    const due = inv.amount - (inv.paid || 0);
-    const pay = Math.min(remaining, due);
+    const cust = allCustomers.find(c => c.id === inv.customerId || c.phone === inv.phone);
+    const planP = inv.planPrice || (cust ? cust.planPrice : 0) || 0;
+    const pay = Math.min(remaining, planP);
     inv.paid = (inv.paid || 0) + pay;
-    inv.status = inv.paid >= inv.amount ? 'paid' : 'partial';
+    inv.status = 'paid';
     await saveInvoiceToFB(inv);
     await savePaymentToFB({
       phone: inv.phone,
@@ -889,16 +892,23 @@ async function selectStatementCustomer(customerId) {
   }
   const custInvoices = allInvoices.filter(i => i.customerId === cust.id || phones.includes(i.phone));
   const totalInvoices = custInvoices.reduce((s, i) => s + i.amount, 0);
-  const totalPaid = custInvoices.reduce((s, i) => s + (i.paid || 0), 0);
-  const remaining = totalInvoices - totalPaid;
+  let totalPlanRevenue = 0;
+  let totalPaidPlan = 0;
+  custInvoices.forEach(i => {
+    const planP = i.planPrice || cust.planPrice || 0;
+    if (i.status === 'paid') totalPaidPlan += planP;
+    totalPlanRevenue += planP;
+  });
+  const remainingPlan = totalPlanRevenue - totalPaidPlan;
 
   document.getElementById('statementSummary').innerHTML = `
     <strong>${cust.name}</strong><br>
     رقم الهاتف: ${cust.phone}<br>
     الأرقام: ${phones.join('، ')}<br>
-    إجمالي الفواتير: ${totalInvoices.toFixed(2)}<br>
-    إجمالي المدفوعات: ${totalPaid.toFixed(2)}<br>
-    الرصيد المتبقي: <strong style="color:${remaining > 0 ? '#e74c3c' : '#27ae60'}">${remaining.toFixed(2)}</strong>
+    إجمالي الفواتير (التكلفة): ${totalInvoices.toFixed(2)}<br>
+    إجمالي سعر الباقات: ${totalPlanRevenue.toFixed(2)}<br>
+    إجمالي المدفوعات (المحصل): ${totalPaidPlan.toFixed(2)}<br>
+    الرصيد المتبقي: <strong style="color:${remainingPlan > 0 ? '#e74c3c' : '#27ae60'}">${remainingPlan.toFixed(2)}</strong>
   `;
   renderStatement();
 }
