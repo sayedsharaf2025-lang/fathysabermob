@@ -190,6 +190,11 @@
           <button class="btn btn-warning" onclick="document.getElementById('restoreInput').click()">📥 استعادة نسخة احتياطية</button>
           <input type="file" id="restoreInput" accept=".json" style="display:none" onchange="restoreBackup(event)">
         </div>
+        <div class="card" style="border: 2px solid var(--warning)">
+          <h3>🔄 ترحيل البيانات من الهيكل القديم</h3>
+          <p style="margin-bottom:0.5rem;color:var(--text-light);font-size:0.9rem">إذا كان لديك بيانات قديمة في Firebase (settings/invoices/advancePayments)، استخدم هذا الزر لترحيلها إلى الهيكل الجديد.</p>
+          <button class="btn btn-warning" onclick="importFromLegacyData()">🔄 ترحيل البيانات القديمة</button>
+        </div>
       </section>
     </main>
   </div>
@@ -199,6 +204,7 @@
   <script src="js/firebase.js"></script>
   <script src="js/charts.js"></script>
   <script src="js/xlsx.js"></script>
+  <script src="js/migration.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
